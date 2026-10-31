@@ -1,5 +1,6 @@
 import { count, eq } from 'drizzle-orm'
-import cors from '@fastify/cors'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { canJoinTopic } from './access'
@@ -7,6 +8,7 @@ import { readSession, signSession, type Session } from './auth'
 import { db } from './db/client'
 import { alerts, people, posts } from './db/schema'
 import { env } from './env'
+import { openApiDocument } from './openapi'
 
 const severities = ['info', 'warning', 'critical'] as const
 const situations = ['open', 'attending', 'closed'] as const
@@ -69,7 +71,11 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): Session |
 }
 
 const app = Fastify({ logger: true })
-await app.register(cors, { origin: true })
+await app.register(swagger, {
+  mode: 'static',
+  specification: { document: openApiDocument },
+})
+await app.register(swaggerUi, { routePrefix: '/docs' })
 
 function wantsHtml(request: FastifyRequest): boolean {
   return (request.headers.accept ?? '').includes('text/html')
@@ -88,7 +94,7 @@ async function statusHtml(): Promise<string> {
 <body style="margin:0;font-family:system-ui,sans-serif;background:#101614;color:#F4F7F5">
 <main style="max-width:28rem;margin:0 auto;padding:2rem">
 <h1 style="margin:0 0 .5rem">PulseMesh</h1>
-<p style="margin:0 0 1.5rem;color:#9AABA3">API no ar.</p>
+<p style="margin:0 0 1.5rem;color:#9AABA3">API no ar. <a href="/docs" style="color:#7DD3C7">Abrir a documentação</a></p>
 <ul style="list-style:none;padding:0;margin:0;display:grid;gap:.75rem">
 <li style="background:#1E3A34;border-radius:12px;padding:1rem">Pessoas: ${peopleRow?.value ?? 0}</li>
 <li style="background:#1E3A34;border-radius:12px;padding:1rem">Alertas: ${alertsRow?.value ?? 0}</li>
@@ -212,6 +218,11 @@ app.delete('/alerts/:id', async (request, reply) => {
 })
 
 app.get('/alerts', async (request, reply) => {
+  const session = requireSession(request, reply)
+  if (!session) {
+    return undefined
+  }
+
   const parsed = listQuery.safeParse(request.query)
   if (!parsed.success) {
     return sendError(reply, 400, 'Filtro inválido.')
@@ -250,8 +261,9 @@ app.get('/alerts', async (request, reply) => {
         row.latitude === null || row.longitude === null
           ? undefined
           : { latitude: row.latitude, longitude: row.longitude },
-      reporterId: row.reporterId,
-      reporterCode: row.reporterCode,
+      ...(session.role === 'admin' || session.sub === row.reporterId
+        ? { reporterId: row.reporterId, reporterCode: row.reporterCode }
+        : {}),
     }))
 })
 

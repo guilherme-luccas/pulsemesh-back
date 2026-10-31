@@ -14,7 +14,8 @@
     "check": "CHECK=1 tsx src/access.ts"
   },
   "dependencies": {
-    "@fastify/cors": "^11.3.1",
+    "@fastify/swagger": "^9.9.2",
+    "@fastify/swagger-ui": "^6.1.2",
     "dotenv": "^18.0.9",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
