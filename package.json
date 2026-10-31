@@ -11,7 +11,8 @@
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push --force",
-    "check": "CHECK=1 tsx src/access.ts"
+    "check": "CHECK=1 tsx src/access.ts",
+    "test": "tsx --test src/server.test.ts"
   },
   "dependencies": {
     "@fastify/swagger": "^9.9.2",

@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { canJoinTopic } from './access'
 import { readSession, signSession, type Session } from './auth'
 import { db } from './db/client'
-import { alerts, people, posts } from './db/schema'
+import { alerts, people, posts, situationEvents } from './db/schema'
 import { env } from './env'
 import { openApiDocument } from './openapi'
 
@@ -34,7 +34,9 @@ const alertBody = z.object({
 })
 
 const situationBody = z.object({
+  id: z.string().min(1),
   situation: z.enum(situations),
+  createdAt: z.string().datetime(),
 })
 
 const postBody = z.object({
@@ -70,7 +72,7 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): Session |
   return session
 }
 
-const app = Fastify({ logger: true })
+export const app = Fastify({ logger: true })
 await app.register(swagger, {
   mode: 'static',
   specification: { document: openApiDocument },
@@ -143,6 +145,21 @@ app.post('/people', async (request, reply) => {
   })
 })
 
+app.post('/people/recover', async (request, reply) => {
+  const parsed = z.object({ shortCode: z.string().trim().min(4).max(8) }).safeParse(request.body)
+  if (!parsed.success) {
+    return sendError(reply, 400, 'Código inválido.')
+  }
+
+  const shortCode = parsed.data.shortCode.toUpperCase()
+  const [person] = await db.select().from(people).where(eq(people.shortCode, shortCode))
+  if (!person) {
+    return sendError(reply, 404, 'Código não encontrado.')
+  }
+
+  return { id: person.id, shortCode: person.shortCode, token: signSession({ sub: person.id, role: 'citizen' }, env.JWT_SECRET) }
+})
+
 app.post('/admin/session', async (request, reply) => {
   const parsed = z.object({ code: z.string() }).safeParse(request.body)
   if (!parsed.success || parsed.data.code.trim().toUpperCase() !== env.ADMIN_CODE.trim().toUpperCase()) {
@@ -184,8 +201,15 @@ app.post('/alerts', async (request, reply) => {
     description: parsed.data.description,
     severity: parsed.data.severity,
     situation: 'open',
+    situationAt: new Date(parsed.data.createdAt),
     latitude: parsed.data.coordinate?.latitude,
     longitude: parsed.data.coordinate?.longitude,
+    createdAt: new Date(parsed.data.createdAt),
+  })
+  await db.insert(situationEvents).values({
+    id: `${parsed.data.id}-open`,
+    alertId: parsed.data.id,
+    situation: 'open',
     createdAt: new Date(parsed.data.createdAt),
   })
 
@@ -212,6 +236,7 @@ app.delete('/alerts/:id', async (request, reply) => {
     return sendError(reply, 403, 'Só quem criou este alerta pode apagar.')
   }
 
+  await db.delete(situationEvents).where(eq(situationEvents.alertId, alert.id))
   await db.delete(posts).where(eq(posts.alertId, alert.id))
   await db.delete(alerts).where(eq(alerts.id, alert.id))
   return { id: alert.id }
@@ -288,8 +313,61 @@ app.patch('/alerts/:id', async (request, reply) => {
     return sendError(reply, 404, 'Alerta não encontrado.')
   }
 
-  await db.update(alerts).set({ situation: body.data.situation }).where(eq(alerts.id, alert.id))
-  return { id: alert.id, situation: body.data.situation }
+  const at = new Date(body.data.createdAt)
+  const [existingEvent] = await db.select().from(situationEvents).where(eq(situationEvents.id, body.data.id))
+  if (!existingEvent) {
+    await db.insert(situationEvents).values({
+      id: body.data.id,
+      alertId: alert.id,
+      situation: body.data.situation,
+      createdAt: at,
+    })
+  }
+
+  const baseline = alert.situationAt ?? alert.createdAt
+  const nextSituation = at.getTime() >= baseline.getTime() ? body.data.situation : alert.situation
+  if (nextSituation !== alert.situation || !alert.situationAt) {
+    await db
+      .update(alerts)
+      .set({
+        situation: nextSituation,
+        situationAt: at.getTime() >= baseline.getTime() ? at : baseline,
+      })
+      .where(eq(alerts.id, alert.id))
+  }
+
+  return { id: alert.id, situation: nextSituation }
+})
+
+app.get('/alerts/:id/events', async (request, reply) => {
+  const session = requireSession(request, reply)
+  if (!session) {
+    return undefined
+  }
+
+  const params = z.object({ id: z.string().min(1) }).safeParse(request.params)
+  if (!params.success) {
+    return sendError(reply, 400, 'Alerta inválido.')
+  }
+
+  const [alert] = await db.select().from(alerts).where(eq(alerts.id, params.data.id))
+  if (!alert) {
+    return sendError(reply, 404, 'Alerta não encontrado.')
+  }
+
+  if (!canJoinTopic({ role: session.role, personId: session.sub, reporterId: alert.reporterId })) {
+    return sendError(reply, 403, 'Só quem criou este alerta pode ver o histórico.')
+  }
+
+  const rows = await db.select().from(situationEvents).where(eq(situationEvents.alertId, alert.id))
+  return rows
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+    .map((row) => ({
+      id: row.id,
+      alertId: row.alertId,
+      situation: row.situation,
+      createdAt: row.createdAt.toISOString(),
+    }))
 })
 
 app.get('/alerts/:id/posts', async (request, reply) => {
@@ -371,4 +449,7 @@ app.post('/alerts/:id/posts', async (request, reply) => {
     }))
 })
 
-await app.listen({ port: env.PORT, host: '0.0.0.0' })
+const entry = process.argv[1] ?? ''
+if (entry.endsWith('server.ts') || entry.endsWith('server.js')) {
+  await app.listen({ port: env.PORT, host: '0.0.0.0' })
+}

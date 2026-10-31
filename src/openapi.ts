@@ -118,6 +118,28 @@ export const openApiDocument = {
         },
       },
     },
+    '/people/recover': {
+      post: {
+        tags: ['people'],
+        summary: 'Recupera a pessoa pelo código curto',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { shortCode: { type: 'string', minLength: 4, maxLength: 8 } },
+                required: ['shortCode'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'A pessoa existente, com id, shortCode e token.' },
+          '404': { description: 'Código não encontrado.', content: { 'application/json': { schema: message } } },
+        },
+      },
+    },
     '/admin/session': {
       post: {
         tags: ['admin'],
@@ -207,7 +229,7 @@ export const openApiDocument = {
     '/alerts/{id}': {
       patch: {
         tags: ['alerts'],
-        summary: 'Muda a situação. Só a operação.',
+        summary: 'Muda a situação. Só a operação. Um evento mais antigo não substitui um mais novo.',
         security: bearer,
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
@@ -216,8 +238,12 @@ export const openApiDocument = {
             'application/json': {
               schema: {
                 type: 'object',
-                properties: { situation: { type: 'string', enum: ['open', 'attending', 'closed'] } },
-                required: ['situation'],
+                properties: {
+                  id: { type: 'string' },
+                  situation: { type: 'string', enum: ['open', 'attending', 'closed'] },
+                  createdAt: { type: 'string', format: 'date-time' },
+                },
+                required: ['id', 'situation', 'createdAt'],
               },
             },
           },
@@ -239,6 +265,20 @@ export const openApiDocument = {
           '200': { description: 'Alerta apagado.' },
           '401': { description: 'Sessão ausente ou inválida.', content: { 'application/json': { schema: message } } },
           '403': { description: 'Sessão de admin, ou outro morador.', content: { 'application/json': { schema: message } } },
+          '404': { description: 'Alerta não encontrado.', content: { 'application/json': { schema: message } } },
+        },
+      },
+    },
+    '/alerts/{id}/events': {
+      get: {
+        tags: ['alerts'],
+        summary: 'Histórico da situação, para o autor ou a operação',
+        security: bearer,
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Eventos em ordem cronológica.' },
+          '401': { description: 'Sessão ausente ou inválida.', content: { 'application/json': { schema: message } } },
+          '403': { description: 'Outro morador.', content: { 'application/json': { schema: message } } },
           '404': { description: 'Alerta não encontrado.', content: { 'application/json': { schema: message } } },
         },
       },

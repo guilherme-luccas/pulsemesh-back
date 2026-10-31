@@ -15,8 +15,18 @@ export const alerts = pgTable('alerts', {
   description: text('description').notNull().default(''),
   severity: text('severity').notNull(),
   situation: text('situation').notNull().default('open'),
+  situationAt: timestamp('situation_at', { withTimezone: true }),
   latitude: doublePrecision('latitude'),
   longitude: doublePrecision('longitude'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+})
+
+export const situationEvents = pgTable('situation_events', {
+  id: text('id').primaryKey(),
+  alertId: text('alert_id')
+    .notNull()
+    .references(() => alerts.id),
+  situation: text('situation').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
 })
 
