@@ -186,6 +186,31 @@ app.post('/alerts', async (request, reply) => {
   return reply.status(201).send({ id: parsed.data.id, situation: 'open' })
 })
 
+app.delete('/alerts/:id', async (request, reply) => {
+  const session = requireSession(request, reply)
+  if (!session || session.role !== 'citizen') {
+    return session ? sendError(reply, 403, 'Só o morador apaga o alerta.') : undefined
+  }
+
+  const params = z.object({ id: z.string().min(1) }).safeParse(request.params)
+  if (!params.success) {
+    return sendError(reply, 400, 'Alerta inválido.')
+  }
+
+  const [alert] = await db.select().from(alerts).where(eq(alerts.id, params.data.id))
+  if (!alert) {
+    return sendError(reply, 404, 'Alerta não encontrado.')
+  }
+
+  if (alert.reporterId !== session.sub) {
+    return sendError(reply, 403, 'Só quem criou este alerta pode apagar.')
+  }
+
+  await db.delete(posts).where(eq(posts.alertId, alert.id))
+  await db.delete(alerts).where(eq(alerts.id, alert.id))
+  return { id: alert.id }
+})
+
 app.get('/alerts', async (request, reply) => {
   const parsed = listQuery.safeParse(request.query)
   if (!parsed.success) {
@@ -202,6 +227,7 @@ app.get('/alerts', async (request, reply) => {
       createdAt: alerts.createdAt,
       latitude: alerts.latitude,
       longitude: alerts.longitude,
+      reporterId: alerts.reporterId,
       reporterCode: people.shortCode,
     })
     .from(alerts)
@@ -224,6 +250,7 @@ app.get('/alerts', async (request, reply) => {
         row.latitude === null || row.longitude === null
           ? undefined
           : { latitude: row.latitude, longitude: row.longitude },
+      reporterId: row.reporterId,
       reporterCode: row.reporterCode,
     }))
 })
@@ -270,7 +297,7 @@ app.get('/alerts/:id/posts', async (request, reply) => {
   }
 
   if (!canJoinTopic({ role: session.role, personId: session.sub, reporterId: alert.reporterId })) {
-    return sendError(reply, 403, 'Só quem criou este alerta pode ver o tópico.')
+    return sendError(reply, 403, 'Só quem criou este alerta pode ver a conversa.')
   }
 
   const rows = await db.select().from(posts).where(eq(posts.alertId, alert.id))
